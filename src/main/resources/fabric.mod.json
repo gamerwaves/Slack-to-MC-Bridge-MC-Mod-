@@ -1,0 +1,37 @@
+{
+	"schemaVersion": 1,
+	"id": "slackbridge",
+	"version": "${version}",
+	"name": "Slack Bridge",
+	"description": "This is an example description! Tell everyone what your mod is about!",
+	"authors": [
+		"Me!"
+	],
+	"contact": {
+		"homepage": "https://fabricmc.net/",
+		"sources": "https://github.com/FabricMC/fabric-example-mod"
+	},
+	"license": "CC0-1.0",
+	"icon": "assets/slackbridge/icon.png",
+	"environment": "server",
+	"entrypoints": {
+		"main": [
+			"com.gamer_waves.slackbridge.SlackBridge"
+		],
+		"fabric-datagen": [
+			"com.gamer_waves.slackbridge.SlackBridgeDataGenerator"
+		]
+	},
+	"mixins": [
+		"slackbridge.mixins.json"
+	],
+	"depends": {
+		"fabricloader": ">=0.17.3",
+		"minecraft": "~1.21.10",
+		"java": ">=21",
+		"fabric-api": "*"
+	},
+	"suggests": {
+		"another-mod": "*"
+	}
+}
