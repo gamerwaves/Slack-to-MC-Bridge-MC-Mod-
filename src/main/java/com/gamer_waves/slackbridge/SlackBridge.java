@@ -140,17 +140,43 @@ public class SlackBridge implements ModInitializer {
                     MessageEvent event = payload.getEvent();
                     if (event == null) return ctx.ack();
 
-                    String text = event.getText();
                     String channelId = event.getChannel();
-                    String mainChannel = currentConfig.slack_channel;
-                    if (channelId == null || !channelId.equals(mainChannel)) return ctx.ack();
+                    if (channelId == null || !channelId.equals(currentConfig.slack_channel)) return ctx.ack();
 
-                    String userId = event.getUser();
-                    String displayName = getDisplayName(userId);
+                    try {
+                        StringBuilder messageBlock = new StringBuilder();
+                        String userId = event.getUser();
+                        String displayName = getDisplayName(userId);
 
-                    broadcastToMinecraft("<" + displayName + "> " + text);
+                        if (event.getThreadTs() != null && !event.getThreadTs().equals(event.getTs())) {
+                            // Fetch all messages in the thread
+                            var repliesResp = slackApp.client().conversationsReplies(r -> r
+                                    .channel(channelId)
+                                    .ts(event.getThreadTs()));
+                            if (repliesResp.isOk()) {
+                                boolean first = true;
+                                for (var msg : repliesResp.getMessages()) {
+                                    String msgUserId = msg.getUser();
+                                    String msgText = msg.getText();
+                                    String msgName = getDisplayName(msgUserId);
+                                    if (first) {
+                                        messageBlock.append("Γ [Slack] <").append(msgName).append("> ").append(msgText).append("\n");
+                                        first = false;
+                                    } else {
+                                        messageBlock.append("| [Reply] <").append(msgName).append("> ").append(msgText).append("\n");
+                                    }
+                                }
+                            }
+                        } else {
+                            messageBlock.append("[Slack] <").append(displayName).append("> ").append(event.getText());
+                        }
+
+                        broadcastToMinecraft(messageBlock.toString().trim());
+                    } catch (Exception e) {}
+
                     return ctx.ack();
                 });
+
 
                 slackApp.event(MessageBotEvent.class, (payload, ctx) -> ctx.ack());
 
