@@ -1,184 +1,208 @@
 package com.gamer_waves.slackbridge;
 
-import net.fabricmc.api.ModInitializer;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import com.sun.net.httpserver.HttpServer;
-
-import java.net.InetSocketAddress;
 import java.io.IOException;
-import java.io.OutputStream;
-import java.nio.charset.StandardCharsets;
-
-import com.google.gson.Gson;
-import com.google.gson.GsonBuilder;
-import com.google.gson.JsonObject;
-import com.google.gson.JsonSyntaxException;
-
+import java.io.Reader;
+import java.io.Writer;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.io.Reader;
-import java.io.Writer;
 import java.nio.file.StandardOpenOption;
 import java.util.Queue;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.regex.Pattern;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import com.google.gson.Gson;
+import com.google.gson.GsonBuilder;
+import com.slack.api.bolt.App;
+import com.slack.api.bolt.AppConfig;
+import com.slack.api.bolt.socket_mode.SocketModeApp;
+import com.slack.api.methods.SlackApiException;
+import com.slack.api.methods.response.chat.ChatPostMessageResponse;
+import com.slack.api.methods.response.users.UsersInfoResponse;
+import com.slack.api.model.event.MessageBotEvent;
+import com.slack.api.model.event.MessageEvent;
+
+import net.fabricmc.api.ModInitializer;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
+import net.fabricmc.fabric.api.message.v1.ServerMessageEvents;
+import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
 import net.minecraft.server.MinecraftServer;
+import net.minecraft.text.Text;
 
 public class SlackBridge implements ModInitializer {
     public static final String MOD_ID = "slackbridge";
     public static final Logger LOGGER = LoggerFactory.getLogger(MOD_ID);
 
     private static volatile MinecraftServer currentServer = null;
-    private static final Gson GSON = new Gson();
+    private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
+
+    private static SocketModeApp socket;
+    private static App slackApp;
+    private static final AtomicBoolean slackInitialized = new AtomicBoolean(false);
+
+    private static Config currentConfig = null;
     private static final String CONFIG_DIR = "config";
     private static final String CONFIG_FILE = "slackbridge.json";
+
     private static final Queue<String> pendingMessages = new ConcurrentLinkedQueue<>();
 
     @Override
     public void onInitialize() {
-        System.out.println("[Slack Bridge] Loading Fabric webhook listener...");
-        ServerLifecycleEvents.SERVER_STARTED.register(server -> currentServer = server);
-        startWebhookServer();
+        ServerLifecycleEvents.SERVER_STARTED.register(server -> {
+            currentServer = server;
+            server.execute(() -> {
+                while (!pendingMessages.isEmpty()) {
+                    server.getPlayerManager().broadcast(Text.literal(pendingMessages.poll()), false);
+                }
+            });
+        });
+
+        currentConfig = Config.loadConfig();
+
+        if (slackInitialized.compareAndSet(false, true)) {
+            initSlackSocketMode();
+        }
+
+        ServerPlayConnectionEvents.JOIN.register((handler, sender, server) -> {
+            String name = handler.player.getName().getString();
+            String uuid = handler.player.getUuidAsString();
+            sendSlackMessageFromPlayer(name, uuid, "*" + name + "* joined the game");
+        });
+
+        ServerPlayConnectionEvents.DISCONNECT.register((handler, server) -> {
+            String name = handler.player.getName().getString();
+            String uuid = handler.player.getUuidAsString();
+            sendSlackMessageFromPlayer(name, uuid, "*" + name + "* left the game");
+        });
+
+        // ServerMessageEvents.CHAT_MESSAGE.register((msg, sender, params) -> {
+        //     String name = sender.getName().getString();
+        //     String uuid = sender.getUuidAsString();
+        //     String text = msg.getContent().getString();
+        //     sendSlackMessageFromPlayer(name, uuid, text);
+        // });
     }
 
     private static class Config {
-        public String host = "";
-        public int port = 8080;
-        public String path = "/webhook";
+        public String slack_channel = "";
+        public String slack_bot_token = "";
+        public String slack_app_token = "";
 
         static Config loadConfig() {
-            Path cfgPath = Paths.get(CONFIG_DIR, CONFIG_FILE);
+            Path path = Paths.get(CONFIG_DIR, CONFIG_FILE);
             try {
-                if (!Files.exists(cfgPath)) {
-                    Files.createDirectories(cfgPath.getParent());
-                    Config defaults = new Config();
-                    Gson pretty = new GsonBuilder().setPrettyPrinting().create();
-                    try (Writer w = Files.newBufferedWriter(cfgPath, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING)) {
-                        pretty.toJson(defaults, w);
-                    }
-                    System.out.println("[Slack Bridge] Generated default config at " + cfgPath.toString());
-                    return defaults;
-                } else {
-                    try (Reader r = Files.newBufferedReader(cfgPath)) {
-                        Config loaded = GSON.fromJson(r, Config.class);
-                        if (loaded == null) return new Config();
-                        return loaded;
-                    }
+                if (!Files.exists(path)) {
+                    Files.createDirectories(path.getParent());
+                    Config def = new Config();
+                    saveConfig(def);
+                    return def;
+                }
+                try (Reader r = Files.newBufferedReader(path)) {
+                    Config cfg = GSON.fromJson(r, Config.class);
+                    if (cfg == null) cfg = new Config();
+                    saveConfig(cfg);
+                    return cfg;
                 }
             } catch (Exception e) {
-                System.err.println("[Slack Bridge] Failed to load config, using defaults: " + e.getMessage());
-                try {
-                    Files.createDirectories(cfgPath.getParent());
-                    Config defaults = new Config();
-                    Gson pretty = new GsonBuilder().setPrettyPrinting().create();
-                    try (Writer w = Files.newBufferedWriter(cfgPath, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING)) {
-                        pretty.toJson(defaults, w);
-                    }
-                    System.out.println("[Slack Bridge] Wrote default config to " + cfgPath.toString());
-                } catch (Exception ignored) {} //ignore
                 return new Config();
             }
         }
+
+        static void saveConfig(Config cfg) {
+            Path path = Paths.get(CONFIG_DIR, CONFIG_FILE);
+            try {
+                Files.createDirectories(path.getParent());
+                Gson pretty = new GsonBuilder().setPrettyPrinting().create();
+                try (Writer w = Files.newBufferedWriter(path, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING)) {
+                    pretty.toJson(cfg, w);
+                }
+            } catch (Exception e) {}
+        }
     }
 
-    private void startWebhookServer() {
+    private void initSlackSocketMode() {
+        new Thread(() -> {
+            try {
+                if (currentConfig.slack_bot_token.isBlank() || currentConfig.slack_app_token.isBlank()) return;
+
+                AppConfig config = AppConfig.builder()
+                        .singleTeamBotToken(currentConfig.slack_bot_token)
+                        .build();
+
+                slackApp = new App(config);
+
+                Pattern sdk = Pattern.compile(".*");
+                slackApp.message(sdk, (payload, ctx) -> {
+                    MessageEvent event = payload.getEvent();
+                    if (event == null) return ctx.ack();
+
+                    String text = event.getText();
+                    String channelId = event.getChannel();
+                    String mainChannel = currentConfig.slack_channel;
+                    if (channelId == null || !channelId.equals(mainChannel)) return ctx.ack();
+
+                    String userId = event.getUser();
+                    String displayName = getDisplayName(userId);
+
+                    broadcastToMinecraft("<" + displayName + "> " + text);
+                    return ctx.ack();
+                });
+
+                slackApp.event(MessageBotEvent.class, (payload, ctx) -> ctx.ack());
+
+                socket = new SocketModeApp(currentConfig.slack_app_token, slackApp);
+                socket.startAsync();
+
+            } catch (Exception e) {}
+        }, "SlackBridge-SocketThread").start();
+    }
+
+    private static String getDisplayName(String userId) {
+        if (slackApp == null || userId == null || userId.isBlank()) return userId;
         try {
-            Config cfg = Config.loadConfig();
-
-            int port = cfg.port;
-            String path = cfg.path;
-            String host = cfg.host;
-
-            String portEnv = System.getenv("SLACKBRIDGE_PORT");
-            if (portEnv != null) {
-                try { port = Integer.parseInt(portEnv); } catch (NumberFormatException ignored) {} //ignore
+            UsersInfoResponse response = slackApp.client().usersInfo(r -> r.user(userId));
+            if (response.isOk() && response.getUser() != null) {
+                String displayName = response.getUser().getProfile().getDisplayName();
+                if (displayName != null && !displayName.isBlank()) return displayName;
+                String realName = response.getUser().getProfile().getRealName();
+                if (realName != null && !realName.isBlank()) return realName;
             }
+        } catch (Exception e) {}
+        return userId;
+    }
 
-            String pathEnv = System.getenv("SLACKBRIDGE_PATH");
-            if (pathEnv != null && !pathEnv.isBlank()) path = pathEnv.startsWith("/") ? pathEnv : ("/" + pathEnv);
+    public static void sendSlackMessageFromPlayer(String playerName, String uuid, String message) {
+        if (slackApp == null || currentConfig == null || currentConfig.slack_channel.isBlank()) return;
 
-            String hostEnv = System.getenv("SLACKBRIDGE_HOST");
-            if (hostEnv != null && !hostEnv.isBlank()) host = hostEnv;
+        String icon = "https://cravatar.eu/avatar/" + uuid + "/512?u=" + System.currentTimeMillis();
+        System.out.println(icon);
 
-            InetSocketAddress bindAddress = (host != null && !host.isBlank())
-                    ? new InetSocketAddress(host, port)
-                    : new InetSocketAddress(port);
+        try {
+            ChatPostMessageResponse resp = slackApp.client().chatPostMessage(r -> r
+                    .channel(currentConfig.slack_channel)
+                    .text(message)
+                    .username(playerName)
+                    .iconUrl(icon)
+            );
+        } catch (IOException | SlackApiException e) {}
+    }
 
-            HttpServer server = HttpServer.create(bindAddress, 0);
-            server.createContext(path, exchange -> {
-                if ("POST".equalsIgnoreCase(exchange.getRequestMethod())) {
-                    String body = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
-
-                    String displayUser = null;
-                    String textMsg = null;
-                    String parentUser = null;
-                    String parentText = null;
-                    String type = null;
-
-                    try {
-                        JsonObject json = GSON.fromJson(body, JsonObject.class);
-                        if (json != null) {
-                            if (json.has("user")) displayUser = json.get("user").getAsString();
-                            if (json.has("text")) textMsg = json.get("text").getAsString();
-                            if (json.has("parent_text")) parentText = json.get("parent_text").getAsString();
-                            if (json.has("parent_user")) parentUser = json.get("parent_user").getAsString();
-                            if (json.has("type")) type = json.get("type").getAsString();
-                        }
-                    } catch (JsonSyntaxException e) {
-                        System.err.println("Failed to parse JSON payload: " + e.getMessage());
-                    }
-
-                    MinecraftServer serverMC = currentServer;
-
-                    String finalBroadcast;
-                    if ("thread_reply".equals(type) && parentText != null) {
-                        finalBroadcast = "[Slack] Γ <" + parentUser + "> " + parentText + "\n" +
-                                         "[Reply] |  <" + displayUser + "> " + textMsg;
-                    } else {
-                        finalBroadcast = "[Slack] <" + displayUser + "> " + textMsg;
-                    }
-
-                    if (serverMC != null) {
-                        serverMC.execute(() -> {
-                            while (!pendingMessages.isEmpty()) {
-                                serverMC.getPlayerManager().broadcast(
-                                    net.minecraft.text.Text.literal(pendingMessages.poll()),
-                                    false
-                                );
-                            }
-                            serverMC.getPlayerManager().broadcast(
-                                net.minecraft.text.Text.literal(finalBroadcast),
-                                false
-                            );
-                        });
-                    } else {
-                        pendingMessages.add(finalBroadcast);
-                    }
-
-                    String response = "Webhook received";
-                    exchange.sendResponseHeaders(200, response.length());
-                    OutputStream os = exchange.getResponseBody();
-                    os.write(response.getBytes());
-                    os.close();
-
-                } else {
-                    exchange.sendResponseHeaders(405, -1);
-                }
-            });
-
-            server.start();
-            String bindInfo = (bindAddress.getAddress() != null && !bindAddress.getAddress().isAnyLocalAddress())
-                    ? (bindAddress.getHostString() + ":" + port)
-                    : ("0.0.0.0:" + port);
-
-            System.out.println("[Slack Bridge] Webhook server started on " + bindInfo + " path " + path
-                    + " (config: " + Paths.get(CONFIG_DIR, CONFIG_FILE).toString() + ")");
-
-        } catch (IOException e) {
-            e.printStackTrace();
+    private static void broadcastToMinecraft(String msg) {
+        MinecraftServer server = currentServer;
+        if (server == null) {
+            pendingMessages.add(msg);
+            return;
         }
+
+        server.execute(() -> {
+            while (!pendingMessages.isEmpty()) {
+                server.getPlayerManager().broadcast(Text.literal(pendingMessages.poll()), false);
+            }
+            server.getPlayerManager().broadcast(Text.literal(msg), false);
+        });
     }
 }

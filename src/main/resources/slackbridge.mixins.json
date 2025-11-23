@@ -3,7 +3,8 @@
 	"package": "com.gamer_waves.slackbridge.mixin",
 	"compatibilityLevel": "JAVA_21",
 	"mixins": [
-		"ExampleMixin"
+		"ChatMessageMixin",
+		"PlayerEventsMixin"
 	],
 	"injectors": {
 		"defaultRequire": 1
