@@ -1,4 +1,4 @@
-# Slack to MC Bridge (Slack Bot)
+# Slack MC Bridge
 
 ## What this is
 
