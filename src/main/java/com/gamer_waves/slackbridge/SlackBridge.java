@@ -25,6 +25,13 @@ import com.slack.api.methods.response.chat.ChatPostMessageResponse;
 import com.slack.api.methods.response.users.UsersInfoResponse;
 import com.slack.api.model.event.MessageBotEvent;
 import com.slack.api.model.event.MessageEvent;
+import com.slack.api.model.block.LayoutBlock;
+import com.slack.api.model.block.SectionBlock;
+import com.slack.api.model.block.composition.MarkdownTextObject;
+import com.slack.api.model.block.element.ImageElement;
+
+import java.util.ArrayList;
+import java.util.List;
 
 import net.fabricmc.api.ModInitializer;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
@@ -179,6 +186,106 @@ public class SlackBridge implements ModInitializer {
 
 
                 slackApp.event(MessageBotEvent.class, (payload, ctx) -> ctx.ack());
+
+                slackApp.command("/list", (req, ctx) -> {
+                    MinecraftServer server = currentServer;
+                    if (server == null) {
+                        return ctx.ack("Server is not running");
+                    }
+
+                    int playerCount = server.getCurrentPlayerCount();
+                    int maxPlayers = server.getMaxPlayerCount();
+
+                    List<LayoutBlock> blocks = new ArrayList<>();
+                    
+                    blocks.add(SectionBlock.builder()
+                            .text(MarkdownTextObject.builder()
+                                    .text("*Players online: " + playerCount + "/" + maxPlayers + "*")
+                                    .build())
+                            .build());
+
+                    if (playerCount > 0) {
+                        server.getPlayerManager().getPlayerList().forEach(player -> {
+                            String playerName = player.getName().getString();
+                            String uuid = player.getUuidAsString();
+                            String avatarUrl = "https://cravatar.eu/avatar/" + uuid + "/32";
+                            
+                            blocks.add(SectionBlock.builder()
+                                    .text(MarkdownTextObject.builder()
+                                            .text(playerName)
+                                            .build())
+                                    .accessory(ImageElement.builder()
+                                            .imageUrl(avatarUrl)
+                                            .altText(playerName)
+                                            .build())
+                                    .build());
+                        });
+                    } else {
+                        blocks.add(SectionBlock.builder()
+                                .text(MarkdownTextObject.builder()
+                                        .text("_No players online_")
+                                        .build())
+                                .build());
+                    }
+
+                    return ctx.ack(r -> r.blocks(blocks));
+                });
+
+                slackApp.command("/whois", (req, ctx) -> {
+                    MinecraftServer server = currentServer;
+                    if (server == null) {
+                        return ctx.ack("Server is not running");
+                    }
+
+                    String playerName = req.getPayload().getText().trim();
+                    if (playerName.isEmpty()) {
+                        return ctx.ack("Usage: `/whois <player_name>`");
+                    }
+
+                    var player = server.getPlayerManager().getPlayer(playerName);
+                    if (player == null) {
+                        return ctx.ack("Player `" + playerName + "` is not online");
+                    }
+
+                    String uuid = player.getUuidAsString();
+                    String avatarUrl = "https://cravatar.eu/avatar/" + uuid + "/64";
+                    
+                    double health = player.getHealth();
+                    double maxHealth = player.getMaxHealth();
+                    int foodLevel = player.getHungerManager().getFoodLevel();
+                    
+                    var pos = player.getBlockPos();
+                    String location = String.format("X: %d, Y: %d, Z: %d", pos.getX(), pos.getY(), pos.getZ());
+                    String world = player.getEntityWorld().getRegistryKey().getValue().toString();
+                    String gameMode = player.interactionManager.getGameMode().asString();
+                    
+                    long lastSeenTicks = server.getTicks() - player.getLastActionTime();
+                    boolean isAFK = lastSeenTicks > 6000; // 5 minutes
+                    String afkStatus = isAFK ? "AFK (" + (lastSeenTicks / 20 / 60) + "m)" : "Active";
+                    
+                    StringBuilder info = new StringBuilder();
+                    info.append("*Player Info: ").append(player.getName().getString()).append("*\n\n");
+                    info.append("• *Health:* ").append(String.format("%.1f/%.1f", health, maxHealth)).append("\n");
+                    info.append("• *Hunger:* ").append(foodLevel).append("/20\n");
+                    info.append("• *Game Mode:* ").append(gameMode).append("\n");
+                    info.append("• *Status:* ").append(afkStatus).append("\n");
+                    info.append("• *World:* `").append(world).append("`\n");
+                    info.append("• *Location:* `").append(location).append("`\n");
+                    info.append("• *UUID:* `").append(uuid).append("`");
+
+                    List<LayoutBlock> blocks = new ArrayList<>();
+                    blocks.add(SectionBlock.builder()
+                            .text(MarkdownTextObject.builder()
+                                    .text(info.toString())
+                                    .build())
+                            .accessory(ImageElement.builder()
+                                    .imageUrl(avatarUrl)
+                                    .altText(player.getName().getString())
+                                    .build())
+                            .build());
+
+                    return ctx.ack(r -> r.blocks(blocks));
+                });
 
                 socket = new SocketModeApp(currentConfig.slack_app_token, slackApp);
                 socket.startAsync();
