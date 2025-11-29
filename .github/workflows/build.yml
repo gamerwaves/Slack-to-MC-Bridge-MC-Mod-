@@ -43,10 +43,18 @@ jobs:
             echo "version=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
           else
             echo "version=1.0.0" >> $GITHUB_OUTPUT
-          fi
+
+      - name: create tag if missing
+        if: github.ref == 'refs/heads/main'
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+          git tag -a ${{ steps.release_version.outputs.version }} -m "Auto release ${{ steps.release_version.outputs.version }}" || echo "tag exists"
+          git push origin ${{ steps.release_version.outputs.version }}
 
       - name: release
         uses: softprops/action-gh-release@v1
         with:
           tag_name: ${{ steps.release_version.outputs.version }}
           files: build/libs/*.jar
+          token: ${{ secrets.GITHUB_TOKEN }}
