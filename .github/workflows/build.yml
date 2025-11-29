@@ -27,28 +27,14 @@ jobs:
       - name: build
         run: ./gradlew build
 
-      - name: get version
-        id: version
-        run: |
-          VERSION=$(./bin/azblogfilter --version)
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-
-      - name: determine tag
-        id: tag
-        run: |
-          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
-            echo "tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
-          else
-            echo "tag=${{ steps.version.outputs.version }}" >> $GITHUB_OUTPUT
-
-      - name: create release
+      - name: release
         uses: actions/create-release@v1
         id: create_release
         with:
           draft: false
           prerelease: false
-          release_name: ${{ steps.version.outputs.version }}
-          tag_name: ${{ steps.tag.outputs.tag }}
+          release_name: "1.0.0"
+          tag_name: "1.0.0"
           body_path: CHANGELOG.md
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
