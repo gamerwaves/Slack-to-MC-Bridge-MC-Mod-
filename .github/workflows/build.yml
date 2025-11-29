@@ -35,6 +35,6 @@ jobs:
           prerelease: false
           release_name: "1.0.0"
           tag_name: "1.0.0"
-          body_path: CHANGELOG.md
+          body: "Built using GitHub Actions"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
