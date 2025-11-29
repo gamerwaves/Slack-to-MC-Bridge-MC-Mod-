@@ -1,12 +1,12 @@
 name: build
 on:
-  pull_request: {}
   push:
     branches:
       - main
     tags:
       - "v*"
       - "release-*"
+  pull_request: {}
 
 jobs:
   build:
@@ -15,46 +15,31 @@ jobs:
       - name: checkout repository
         uses: actions/checkout@v4
 
-      - name: validate gradle wrapper
-        uses: gradle/actions/wrapper-validation@v4
-
-      - name: setup jdk
-        uses: actions/setup-java@v4
-        with:
-          java-version: '21'
-          distribution: 'microsoft'
-
-      - name: make gradle wrapper executable
-        run: chmod +x ./gradlew
-
       - name: build
-        run: ./gradlew build
+        run: make build
 
-      - name: capture build artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: Artifacts
-          path: build/libs/
+      - name: get version
+        id: version
+        run: |
+          VERSION=$(./bin/azblogfilter --version)
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
 
-      - name: determine release version
-        id: release_version
+      - name: determine tag
+        id: tag
         run: |
           if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
-            echo "version=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+            echo "tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
           else
-            echo "version=1.0.0" >> $GITHUB_OUTPUT
+            echo "tag=${{ steps.version.outputs.version }}" >> $GITHUB_OUTPUT
 
-      - name: create tag if missing
-        if: github.ref == 'refs/heads/main'
-        run: |
-          git config user.name "github-actions"
-          git config user.email "github-actions@github.com"
-          git tag -a ${{ steps.release_version.outputs.version }} -m "Auto release ${{ steps.release_version.outputs.version }}" || echo "tag exists"
-          git push origin ${{ steps.release_version.outputs.version }}
-
-      - name: release
-        uses: softprops/action-gh-release@v1
+      - name: create release
+        uses: actions/create-release@v1
+        id: create_release
         with:
-          tag_name: ${{ steps.release_version.outputs.version }}
-          files: build/libs/*.jar
-          token: ${{ secrets.GITHUB_TOKEN }}
+          draft: false
+          prerelease: false
+          release_name: ${{ steps.version.outputs.version }}
+          tag_name: ${{ steps.tag.outputs.tag }}
+          body_path: CHANGELOG.md
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
