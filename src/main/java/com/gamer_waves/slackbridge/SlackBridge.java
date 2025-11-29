@@ -31,14 +31,21 @@ import com.slack.api.model.block.composition.MarkdownTextObject;
 import com.slack.api.model.block.element.ImageElement;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Random;
+import java.util.UUID;
+import java.util.regex.Matcher;
 
 import net.fabricmc.api.ModInitializer;
+import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.message.v1.ServerMessageEvents;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.text.Text;
+import com.gamer_waves.slackbridge.commands.UnlinkCommand;
 
 public class SlackBridge implements ModInitializer {
     public static final String MOD_ID = "slackbridge";
@@ -54,8 +61,29 @@ public class SlackBridge implements ModInitializer {
     private static Config currentConfig = null;
     private static final String CONFIG_DIR = "config";
     private static final String CONFIG_FILE = "slackbridge.json";
+    private static final String LINKS_FILE = "slackbridge_links.json";
 
     private static final Queue<String> pendingMessages = new ConcurrentLinkedQueue<>();
+    private static AccountLinks accountLinks = null;
+    private static final Map<String, LinkCodeData> pendingLinkCodes = new HashMap<>();
+    private static final Random random = new Random();
+    private static final int CODE_EXPIRY_SECONDS = 300; // 5 minutes
+
+    private static class LinkCodeData {
+        String uuid;
+        String username;
+        long expiryTime;
+
+        LinkCodeData(String uuid, String username, long expiryTime) {
+            this.uuid = uuid;
+            this.username = username;
+            this.expiryTime = expiryTime;
+        }
+
+        boolean isExpired() {
+            return System.currentTimeMillis() > expiryTime;
+        }
+    }
 
     @Override
     public void onInitialize() {
@@ -69,27 +97,51 @@ public class SlackBridge implements ModInitializer {
         });
 
         currentConfig = Config.loadConfig();
+        accountLinks = AccountLinks.loadLinks();
 
         if (slackInitialized.compareAndSet(false, true)) {
             initSlackSocketMode();
         }
 
+        CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) -> {
+            UnlinkCommand.register(dispatcher);
+        });
+
         ServerPlayConnectionEvents.JOIN.register((handler, sender, server) -> {
             String name = handler.player.getName().getString();
             String uuid = handler.player.getUuidAsString();
-            sendSlackMessageFromPlayer(name, uuid, "*" + name + "* joined the game");
+            
+            if (accountLinks.getSlackId(uuid) == null) {
+                String linkCode = generateLinkCode();
+                long expiryTime = System.currentTimeMillis() + (CODE_EXPIRY_SECONDS * 1000);
+                pendingLinkCodes.put(linkCode, new LinkCodeData(uuid, name, expiryTime));
+                
+                Text disconnectMessage = Text.literal(
+                    "§c§l§nYou must link your Slack account to join the server!\n\n" +
+                    "§r§ePlease run §6/link " + linkCode + "§e in Slack to link your account.\n\n" +
+                    "§7§oThis code expires in " + CODE_EXPIRY_SECONDS + " seconds."
+                );
+                
+                handler.player.networkHandler.disconnect(disconnectMessage);
+            } else {
+                sendSlackMessageFromPlayer(name, uuid, "joined the game");
+            }
         });
 
         ServerPlayConnectionEvents.DISCONNECT.register((handler, server) -> {
             String name = handler.player.getName().getString();
             String uuid = handler.player.getUuidAsString();
-            sendSlackMessageFromPlayer(name, uuid, "*" + name + "* left the game");
+            
+            if (accountLinks.getSlackId(uuid) != null) {
+                sendSlackMessageFromPlayer(name, uuid, "left the game");
+            }
         });
 
         // ServerMessageEvents.CHAT_MESSAGE.register((msg, sender, params) -> {
         //     String name = sender.getName().getString();
         //     String uuid = sender.getUuidAsString();
         //     String text = msg.getContent().getString();
+        //     text = processMcMentions(text);
         //     sendSlackMessageFromPlayer(name, uuid, text);
         // });
     }
@@ -128,6 +180,71 @@ public class SlackBridge implements ModInitializer {
                     pretty.toJson(cfg, w);
                 }
             } catch (Exception e) {}
+        }
+    }
+
+    private static class AccountLinks {
+        public Map<String, String> mcUuidToSlackId = new HashMap<>();
+        public Map<String, String> slackIdToMcUuid = new HashMap<>();
+
+        static AccountLinks loadLinks() {
+            Path path = Paths.get(CONFIG_DIR, LINKS_FILE);
+            try {
+                if (!Files.exists(path)) {
+                    Files.createDirectories(path.getParent());
+                    AccountLinks def = new AccountLinks();
+                    saveLinks(def);
+                    return def;
+                }
+                try (Reader r = Files.newBufferedReader(path)) {
+                    AccountLinks links = GSON.fromJson(r, AccountLinks.class);
+                    if (links == null) links = new AccountLinks();
+                    return links;
+                }
+            } catch (Exception e) {
+                return new AccountLinks();
+            }
+        }
+
+        static void saveLinks(AccountLinks links) {
+            Path path = Paths.get(CONFIG_DIR, LINKS_FILE);
+            try {
+                Files.createDirectories(path.getParent());
+                Gson pretty = new GsonBuilder().setPrettyPrinting().create();
+                try (Writer w = Files.newBufferedWriter(path, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING)) {
+                    pretty.toJson(links, w);
+                }
+            } catch (Exception e) {}
+        }
+
+        void linkAccounts(String mcUuid, String slackId) {
+            mcUuidToSlackId.put(mcUuid, slackId);
+            slackIdToMcUuid.put(slackId, mcUuid);
+            saveLinks(this);
+        }
+
+        void unlinkByUuid(String mcUuid) {
+            String slackId = mcUuidToSlackId.remove(mcUuid);
+            if (slackId != null) {
+                slackIdToMcUuid.remove(slackId);
+                saveLinks(this);
+            }
+        }
+
+        void unlinkBySlackId(String slackId) {
+            String mcUuid = slackIdToMcUuid.remove(slackId);
+            if (mcUuid != null) {
+                mcUuidToSlackId.remove(mcUuid);
+                saveLinks(this);
+            }
+        }
+
+        String getSlackId(String mcUuid) {
+            return mcUuidToSlackId.get(mcUuid);
+        }
+
+        String getMcUuid(String slackId) {
+            return slackIdToMcUuid.get(slackId);
         }
     }
 
@@ -175,7 +292,9 @@ public class SlackBridge implements ModInitializer {
                                 }
                             }
                         } else {
-                            messageBlock.append("[Slack] <").append(displayName).append("> ").append(event.getText());
+                            String text = event.getText();
+                            text = processSlackMentions(text);
+                            messageBlock.append("[Slack] <").append(displayName).append("> ").append(text);
                         }
 
                         broadcastToMinecraft(messageBlock.toString().trim());
@@ -287,6 +406,54 @@ public class SlackBridge implements ModInitializer {
                     return ctx.ack(r -> r.blocks(blocks));
                 });
 
+                slackApp.command("/link", (req, ctx) -> {
+                    String slackUserId = req.getPayload().getUserId();
+                    String linkCode = req.getPayload().getText().trim().toUpperCase();
+
+                    if (linkCode.isEmpty()) {
+                        return ctx.ack("Usage: `/link <code>`\nExample: `/link ABC123`\n\nGet your link code by joining the Minecraft server.");
+                    }
+
+                    LinkCodeData codeData = pendingLinkCodes.get(linkCode);
+                    if (codeData == null || codeData.isExpired()) {
+                        if (codeData != null && codeData.isExpired()) {
+                            pendingLinkCodes.remove(linkCode);
+                        }
+                        return ctx.ack("Invalid or expired link code. Please join the Minecraft server to get a new code.");
+                    }
+
+                    String mcUuid = codeData.uuid;
+                    String playerName = codeData.username;
+                    
+                    accountLinks.linkAccounts(mcUuid, slackUserId);
+                    pendingLinkCodes.remove(linkCode);
+
+                    return ctx.ack("Successfully linked your Slack account to Minecraft player: `" + playerName + "`\n\nYou can now join the server!");
+                });
+
+                slackApp.command("/unlink", (req, ctx) -> {
+                    String slackUserId = req.getPayload().getUserId();
+                    
+                    String mcUuid = accountLinks.getMcUuid(slackUserId);
+                    if (mcUuid == null) {
+                        return ctx.ack("❌ You don't have a linked Minecraft account.");
+                    }
+
+                    accountLinks.unlinkBySlackId(slackUserId);
+
+                    MinecraftServer server = currentServer;
+                    if (server != null) {
+                        var player = server.getPlayerManager().getPlayer(UUID.fromString(mcUuid));
+                        if (player != null) {
+                            server.execute(() -> {
+                                player.networkHandler.disconnect(Text.literal("§c§lYour account has been unlinked from Slack.\n\n§eYou must relink to continue playing."));
+                            });
+                        }
+                    }
+
+                    return ctx.ack("✅ Successfully unlinked your Minecraft account.\n\nYou will need to link again to join the server.");
+                });
+
                 socket = new SocketModeApp(currentConfig.slack_app_token, slackApp);
                 socket.startAsync();
 
@@ -337,5 +504,82 @@ public class SlackBridge implements ModInitializer {
             }
             server.getPlayerManager().broadcast(Text.literal(msg), false);
         });
+    }
+
+    private static String processSlackMentions(String text) {
+        if (accountLinks == null || currentServer == null) return text;
+
+        Pattern mentionPattern = Pattern.compile("<@([A-Z0-9]+)>");
+        Matcher matcher = mentionPattern.matcher(text);
+        StringBuffer result = new StringBuffer();
+
+        while (matcher.find()) {
+            String slackUserId = matcher.group(1);
+            String mcUuid = accountLinks.getMcUuid(slackUserId);
+            
+            if (mcUuid != null) {
+                var player = currentServer.getPlayerManager().getPlayer(UUID.fromString(mcUuid));
+                if (player != null) {
+                    String mcName = player.getName().getString();
+                    matcher.appendReplacement(result, "§e@" + mcName + "§r");
+                    
+                    currentServer.execute(() -> {
+                        player.sendMessage(Text.literal("§e§l[PING] §r§7You were mentioned in Slack!"));
+                    });
+                    continue;
+                }
+            }
+            
+            String displayName = getDisplayName(slackUserId);
+            matcher.appendReplacement(result, "@" + displayName);
+        }
+        matcher.appendTail(result);
+        return result.toString();
+    }
+
+    public static String processMcMentions(String text) {
+        if (accountLinks == null || currentServer == null) return text;
+
+        Pattern mentionPattern = Pattern.compile("@(\\w+)");
+        Matcher matcher = mentionPattern.matcher(text);
+        StringBuffer result = new StringBuffer();
+
+        while (matcher.find()) {
+            String mcUsername = matcher.group(1);
+            var player = currentServer.getPlayerManager().getPlayer(mcUsername);
+            
+            if (player != null) {
+                String mcUuid = player.getUuidAsString();
+                String slackUserId = accountLinks.getSlackId(mcUuid);
+                
+                if (slackUserId != null) {
+                    matcher.appendReplacement(result, "<@" + slackUserId + ">");
+                    continue;
+                }
+            }
+            
+            matcher.appendReplacement(result, "@" + mcUsername);
+        }
+        matcher.appendTail(result);
+        return result.toString();
+    }
+
+    private static String generateLinkCode() {
+        String chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+        StringBuilder code = new StringBuilder();
+        for (int i = 0; i < 6; i++) {
+            code.append(chars.charAt(random.nextInt(chars.length())));
+        }
+        return code.toString();
+    }
+
+    public static boolean isPlayerLinked(String uuid) {
+        return accountLinks != null && accountLinks.getSlackId(uuid) != null;
+    }
+
+    public static void unlinkAccount(String uuid) {
+        if (accountLinks != null) {
+            accountLinks.unlinkByUuid(uuid);
+        }
     }
 }

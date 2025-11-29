@@ -2,15 +2,22 @@
 
 ## What this is
 
-This Slack to MC bridge takes slack messages sent in a channel and sends it to minecraft like this: 
+This Slack to MC bridge takes slack messages sent in a channel and sends it to minecraft like this:
 
 `[Slack] <DISPLAY NAME> Message`
 
 It also takes MC messages and sends them to slack with your minecraft skin as your pfp.
 
-## How to use this
+# Usage
+
+Download the mod from [Github Releases](https://github.com/gamerwaves/Slack-to-MC-Bridge-MC-Mod-/releases) and then put `slackbridge-x.x.x` into your mods folder.
+
+Then, run your server for the first time with this mod, and then stop it, got to the servers config/slackbridge.json/ and then fill in all values. Finally, restart your server and follow the link instructions, then test it out by going to the slack channel and typing somthing in mc or slack.
+
+## Developing
 
 Clone this repo, and then create a slack bot using this manifest:
+
 ```manifest.json
 {
     "display_information": {
@@ -54,6 +61,8 @@ Clone this repo, and then create a slack bot using this manifest:
 }
 ```
 
-Then, run your server for the first time with this mod, and then stop it, got to the servers config/slackbridge.json/ and then fill in all values.
+Run `./gradlew build`
 
-Finally, restart your server and then test it out by going to the slack channel and typing somthing in mc or slack.
+Then, run your server for the first time with this mod with `./gradlew runServer`, and then stop it, got to the servers config/slackbridge.json/ and then fill in all values.
+
+Finally, restart your server and follow the link instructions, then test it out by going to the slack channel and typing somthing in mc or slack.

@@ -22,6 +22,8 @@ public class ChatMessageMixin {
         String uuid = player.getUuidAsString();
         String messageText = message.getContent().getString();
 
+        messageText = SlackBridge.processMcMentions(messageText);
+
         SlackBridge.sendSlackMessageFromPlayer(
             playerName,
             uuid,
