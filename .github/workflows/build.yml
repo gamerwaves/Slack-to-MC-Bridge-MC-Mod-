@@ -15,8 +15,11 @@ jobs:
       - name: checkout repository
         uses: actions/checkout@v4
 
+      - name: make gradle wrapper executable
+        run: chmod +x ./gradlew
+
       - name: build
-        run: make build
+        run: ./gradlew build
 
       - name: get version
         id: version
