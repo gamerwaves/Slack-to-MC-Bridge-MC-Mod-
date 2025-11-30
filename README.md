@@ -1,8 +1,8 @@
 # Slack MC Bridge
 
-## **IMPORTANT**
+## **IMPORTANT FOR USERS AND DEVELOPERS**
 
-INSTALL THE MODRINTH APP AND THEN INSTALL [THIS MRPACK](https://github.com/gamerwaves/Slack-to-MC-Bridge-MC-Mod-/raw/refs/heads/main/Slack-MC-Bridge%201.0.0.mrpack) INTO A NEW INSTANCE BY DOING THIS: NEW INSTANCE -> FROM FILE!!!\
+INSTALL THE MODRINTH APP AND THEN INSTALL [THIS MRPACK](https://github.com/gamerwaves/Slack-to-MC-Bridge-MC-Mod-/raw/refs/heads/main/Slack-MC-Bridge%201.0.0.mrpack) INTO A NEW INSTANCE BY DOING THIS: NEW INSTANCE -> FROM FILE!!!
 
 Animated emojis dont work. Emojis with dashes dont work to send to slack because all - are replaced with a _.
 
