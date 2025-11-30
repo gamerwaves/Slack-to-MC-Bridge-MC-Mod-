@@ -16,7 +16,7 @@ It also takes MC messages and sends them to slack with your minecraft skin as yo
 
 ## Usage
 
-Download the mod from [Github Releases](https://github.com/gamerwaves/Slack-to-MC-Bridge-MC-Mod-/releases) and then put `slackbridge-x.x.x` into your mods folder.
+Download the mod from [Github Releases](https://github.com/gamerwaves/Slack-to-MC-Bridge-MC-Mod-/releases) and then put `slackbridge-x.x.x.jar` into your mods folder.
 
 Then, run your server for the first time with this mod, and then stop it, got to the servers config/slackbridge.json/ and then fill in all values (the resource pack host is server ip with no http(s):// or slashes.). Finally, restart your server and follow the link instructions, then test it out by going to the slack channel and typing somthing in mc or slack.
 
