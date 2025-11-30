@@ -107,19 +107,42 @@ public class SlackBridge implements ModInitializer {
         // Start Emogg emoji downloader and resource pack server
         if (currentConfig.slack_bot_token != null && !currentConfig.slack_bot_token.isBlank()) {
             emojiDownloader = new com.gamer_waves.slackbridge.emoji.EmoggEmojiDownloader(currentConfig.slack_bot_token);
+            
+            // Check if ZIP already exists from previous run
+            if (emojiDownloader.getZipFile() != null && 
+                java.nio.file.Files.exists(emojiDownloader.getZipFile())) {
+                
+                LOGGER.info("Found existing resource pack ZIP, starting server immediately");
+                resourcePackServer = new com.gamer_waves.slackbridge.emoji.ResourcePackServer(8080);
+                resourcePackServer.start(emojiDownloader.getZipFile());
+                LOGGER.info("Players will receive Emogg resource pack on join");
+            } else {
+                LOGGER.info("No existing resource pack found, starting download...");
+            }
+            
+            // Start downloader (will skip if files exist)
             emojiDownloader.start();
             
             // Start resource pack server after a delay (wait for ZIP to be created)
             new Thread(() -> {
                 try {
-                    Thread.sleep(90000); // Wait 90 seconds for downloads and ZIP creation
-                    if (emojiDownloader.getZipFile() != null && 
-                        java.nio.file.Files.exists(emojiDownloader.getZipFile())) {
+                    // Check every 10 seconds for up to 2 minutes
+                    for (int i = 0; i < 12; i++) {
+                        Thread.sleep(10000);
                         
-                        resourcePackServer = new com.gamer_waves.slackbridge.emoji.ResourcePackServer(8080);
-                        resourcePackServer.start(emojiDownloader.getZipFile());
-                        
-                        LOGGER.info("Players will receive Emogg resource pack on join");
+                        if (resourcePackServer == null && 
+                            emojiDownloader.getZipFile() != null && 
+                            java.nio.file.Files.exists(emojiDownloader.getZipFile())) {
+                            
+                            resourcePackServer = new com.gamer_waves.slackbridge.emoji.ResourcePackServer(8080);
+                            resourcePackServer.start(emojiDownloader.getZipFile());
+                            LOGGER.info("Players will receive Emogg resource pack on join");
+                            break;
+                        }
+                    }
+                    
+                    if (resourcePackServer == null) {
+                        LOGGER.warn("Resource pack ZIP not ready after 2 minutes");
                     }
                 } catch (Exception e) {
                     LOGGER.error("Failed to start resource pack server", e);
@@ -150,8 +173,8 @@ public class SlackBridge implements ModInitializer {
             } else {
                 sendSlackMessageFromPlayer(name, uuid, "joined the game");
                 
-                // Send Emogg resource pack
-                sendResourcePackToPlayer(handler.player);
+                // Send resource pack download link
+                sendResourcePackMessage(handler.player);
             }
         });
 
@@ -177,6 +200,7 @@ public class SlackBridge implements ModInitializer {
         public String slack_channel = "";
         public String slack_bot_token = "";
         public String slack_app_token = "";
+        public String resource_pack_host = "localhost";
 
         static Config loadConfig() {
             Path path = Paths.get(CONFIG_DIR, CONFIG_FILE);
@@ -610,35 +634,21 @@ public class SlackBridge implements ModInitializer {
         }
     }
     
-    private static void sendResourcePackToPlayer(net.minecraft.server.network.ServerPlayerEntity player) {
+    private static void sendResourcePackMessage(net.minecraft.server.network.ServerPlayerEntity player) {
         if (resourcePackServer == null || emojiDownloader == null) {
             return; // Not ready yet
         }
         
         try {
-            String serverIp = currentServer.getServerIp();
-            if (serverIp == null || serverIp.isEmpty()) {
-                serverIp = "localhost";
-            }
+            String resourcePackUrl = resourcePackServer.getUrl(currentConfig.resource_pack_host);
             
-            String resourcePackUrl = resourcePackServer.getUrl(serverIp);
-            String sha1 = emojiDownloader.getZipSha1();
-            
-            if (resourcePackUrl != null && sha1 != null) {
-                // Send resource pack using the network handler (1.20.4 API)
-                player.networkHandler.sendPacket(
-                    new net.minecraft.network.packet.s2c.common.ResourcePackSendS2CPacket(
-                        UUID.randomUUID(),
-                        resourcePackUrl,
-                        sha1,
-                        false,
-                        Text.literal("Emogg Slack Emojis")
-                    )
-                );
-                LOGGER.info("Sent Emogg resource pack to player: {}", player.getName().getString());
+            if (resourcePackUrl != null) {
+                player.sendMessage(Text.literal("§e§l[Emogg] §r§7To make emojis work, download this resource pack:"));
+                player.sendMessage(Text.literal("§b" + resourcePackUrl));
+                LOGGER.info("Sent resource pack link to player: {}", player.getName().getString());
             }
         } catch (Exception e) {
-            LOGGER.error("Failed to send resource pack to player", e);
+            LOGGER.error("Failed to send resource pack message to player", e);
         }
     }
 }

@@ -58,6 +58,12 @@ public class EmoggEmojiDownloader {
         if (initialized) return;
         initialized = true;
 
+        // Check if ZIP already exists
+        if (Files.exists(zipFile)) {
+            SlackBridge.LOGGER.info("Resource pack ZIP already exists, skipping download");
+            return;
+        }
+
         SlackBridge.LOGGER.info("Starting Emogg emoji downloader...");
 
         // Run in background thread
@@ -178,11 +184,15 @@ public class EmoggEmojiDownloader {
             return false;
         }
 
-        // Download
+        // Download to temp file first
+        Path tempFile = outputFile.getParent().resolve(safeName + ".tmp");
         URL url = new java.net.URI(urlString).toURL();
         try (InputStream in = url.openStream()) {
-            Files.copy(in, outputFile);
+            Files.copy(in, tempFile);
         }
+        
+        // Move to final location
+        Files.move(tempFile, outputFile);
         return true;
     }
     
@@ -207,9 +217,18 @@ public class EmoggEmojiDownloader {
         }
         
         String sha1 = calculateSha1(zipFile);
+        long sizeBytes = Files.size(zipFile);
+        long sizeMB = sizeBytes / (1024 * 1024);
+        
         SlackBridge.LOGGER.info("Resource pack ZIP created: {}", zipFile.toAbsolutePath());
         SlackBridge.LOGGER.info("SHA-1: {}", sha1);
+        SlackBridge.LOGGER.info("Size: {} MB ({} bytes)", sizeMB, sizeBytes);
         SlackBridge.LOGGER.info("Downloaded {} emojis", downloadedCount.get());
+        
+        if (sizeMB > 250) {
+            SlackBridge.LOGGER.warn("Resource pack is larger than 250MB! Players may need to increase their client limit.");
+            SlackBridge.LOGGER.warn("Players should add this JVM argument: -Dminecraft.resource-pack-size-limit={}", sizeBytes);
+        }
     }
     
     private void addFileToZip(ZipOutputStream zos, Path file, String zipPath) throws Exception {

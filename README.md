@@ -2,7 +2,9 @@
 
 ## **IMPORTANT**
 
-INSTALL THE MODRINTH APP AND THEN INSTALL [THIS MRPACK](https://github.com/gamerwaves/Slack-to-MC-Bridge-MC-Mod-/raw/refs/heads/main/Slack-MC-Bridge%201.0.0.mrpack) INTO A NEW INSTANCE BY DOING THIS: NEW INSTANCE -> FROM FILE!!!
+INSTALL THE MODRINTH APP AND THEN INSTALL [THIS MRPACK](https://github.com/gamerwaves/Slack-to-MC-Bridge-MC-Mod-/raw/refs/heads/main/Slack-MC-Bridge%201.0.0.mrpack) INTO A NEW INSTANCE BY DOING THIS: NEW INSTANCE -> FROM FILE!!!\
+
+Animated emojis dont work. Emojis with dashes dont work to send to slack because all - are replaced with a _.
 
 ## What this is
 
@@ -16,7 +18,7 @@ It also takes MC messages and sends them to slack with your minecraft skin as yo
 
 Download the mod from [Github Releases](https://github.com/gamerwaves/Slack-to-MC-Bridge-MC-Mod-/releases) and then put `slackbridge-x.x.x` into your mods folder.
 
-Then, run your server for the first time with this mod, and then stop it, got to the servers config/slackbridge.json/ and then fill in all values. Finally, restart your server and follow the link instructions, then test it out by going to the slack channel and typing somthing in mc or slack.
+Then, run your server for the first time with this mod, and then stop it, got to the servers config/slackbridge.json/ and then fill in all values (the resource pack host is server ip with no http(s):// or slashes.). Finally, restart your server and follow the link instructions, then test it out by going to the slack channel and typing somthing in mc or slack.
 
 ## Developing
 
