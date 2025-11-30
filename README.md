@@ -1,5 +1,11 @@
 # Slack MC Bridge
 
+
+## **IMPORTANT**
+
+INSTALL THE MODRINTH APP AND THEN INSTALL THIS MRPACK INTO A NEW INSTANCE BY DOING THIS: NEW INSTANCE -> FROM FILE!!!
+
+
 ## What this is
 
 This Slack to MC bridge takes slack messages sent in a channel and sends it to minecraft like this:
@@ -8,7 +14,7 @@ This Slack to MC bridge takes slack messages sent in a channel and sends it to m
 
 It also takes MC messages and sends them to slack with your minecraft skin as your pfp.
 
-# Usage
+## Usage
 
 Download the mod from [Github Releases](https://github.com/gamerwaves/Slack-to-MC-Bridge-MC-Mod-/releases) and then put `slackbridge-x.x.x` into your mods folder.
 
