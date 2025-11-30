@@ -21,7 +21,6 @@ import com.slack.api.bolt.App;
 import com.slack.api.bolt.AppConfig;
 import com.slack.api.bolt.socket_mode.SocketModeApp;
 import com.slack.api.methods.SlackApiException;
-import com.slack.api.methods.response.chat.ChatPostMessageResponse;
 import com.slack.api.methods.response.users.UsersInfoResponse;
 import com.slack.api.model.event.MessageBotEvent;
 import com.slack.api.model.event.MessageEvent;
@@ -41,7 +40,6 @@ import java.util.regex.Matcher;
 import net.fabricmc.api.ModInitializer;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
-import net.fabricmc.fabric.api.message.v1.ServerMessageEvents;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.text.Text;
@@ -57,6 +55,9 @@ public class SlackBridge implements ModInitializer {
     private static SocketModeApp socket;
     private static App slackApp;
     private static final AtomicBoolean slackInitialized = new AtomicBoolean(false);
+    
+    private static com.gamer_waves.slackbridge.emoji.ResourcePackServer resourcePackServer;
+    private static com.gamer_waves.slackbridge.emoji.EmoggEmojiDownloader emojiDownloader;
 
     private static Config currentConfig = null;
     private static final String CONFIG_DIR = "config";
@@ -103,6 +104,29 @@ public class SlackBridge implements ModInitializer {
             initSlackSocketMode();
         }
 
+        // Start Emogg emoji downloader and resource pack server
+        if (currentConfig.slack_bot_token != null && !currentConfig.slack_bot_token.isBlank()) {
+            emojiDownloader = new com.gamer_waves.slackbridge.emoji.EmoggEmojiDownloader(currentConfig.slack_bot_token);
+            emojiDownloader.start();
+            
+            // Start resource pack server after a delay (wait for ZIP to be created)
+            new Thread(() -> {
+                try {
+                    Thread.sleep(90000); // Wait 90 seconds for downloads and ZIP creation
+                    if (emojiDownloader.getZipFile() != null && 
+                        java.nio.file.Files.exists(emojiDownloader.getZipFile())) {
+                        
+                        resourcePackServer = new com.gamer_waves.slackbridge.emoji.ResourcePackServer(8080);
+                        resourcePackServer.start(emojiDownloader.getZipFile());
+                        
+                        LOGGER.info("Players will receive Emogg resource pack on join");
+                    }
+                } catch (Exception e) {
+                    LOGGER.error("Failed to start resource pack server", e);
+                }
+            }, "ResourcePackServerInit").start();
+        }
+
         CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) -> {
             UnlinkCommand.register(dispatcher);
         });
@@ -125,6 +149,9 @@ public class SlackBridge implements ModInitializer {
                 handler.player.networkHandler.disconnect(disconnectMessage);
             } else {
                 sendSlackMessageFromPlayer(name, uuid, "joined the game");
+                
+                // Send Emogg resource pack
+                sendResourcePackToPlayer(handler.player);
             }
         });
 
@@ -482,7 +509,7 @@ public class SlackBridge implements ModInitializer {
         System.out.println(icon);
 
         try {
-            ChatPostMessageResponse resp = slackApp.client().chatPostMessage(r -> r
+            slackApp.client().chatPostMessage(r -> r
                     .channel(currentConfig.slack_channel)
                     .text(message)
                     .username(playerName)
@@ -580,6 +607,38 @@ public class SlackBridge implements ModInitializer {
     public static void unlinkAccount(String uuid) {
         if (accountLinks != null) {
             accountLinks.unlinkByUuid(uuid);
+        }
+    }
+    
+    private static void sendResourcePackToPlayer(net.minecraft.server.network.ServerPlayerEntity player) {
+        if (resourcePackServer == null || emojiDownloader == null) {
+            return; // Not ready yet
+        }
+        
+        try {
+            String serverIp = currentServer.getServerIp();
+            if (serverIp == null || serverIp.isEmpty()) {
+                serverIp = "localhost";
+            }
+            
+            String resourcePackUrl = resourcePackServer.getUrl(serverIp);
+            String sha1 = emojiDownloader.getZipSha1();
+            
+            if (resourcePackUrl != null && sha1 != null) {
+                // Send resource pack using the network handler (1.20.4 API)
+                player.networkHandler.sendPacket(
+                    new net.minecraft.network.packet.s2c.common.ResourcePackSendS2CPacket(
+                        UUID.randomUUID(),
+                        resourcePackUrl,
+                        sha1,
+                        false,
+                        Text.literal("Emogg Slack Emojis")
+                    )
+                );
+                LOGGER.info("Sent Emogg resource pack to player: {}", player.getName().getString());
+            }
+        } catch (Exception e) {
+            LOGGER.error("Failed to send resource pack to player", e);
         }
     }
 }

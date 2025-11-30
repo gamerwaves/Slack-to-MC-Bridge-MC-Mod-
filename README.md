@@ -23,24 +23,57 @@ Clone this repo, and then create a slack bot using this manifest:
     "display_information": {
         "name": "Slack MC Bridge",
         "description": "Slack MC Bridge",
-        "background_color": "#000000"
+        "background_color": "#b80000"
     },
     "features": {
         "bot_user": {
-            "display_name": "Slack MC Bridge",
+            "display_name": "Slack to MC Bridge",
             "always_online": false
-        }
+        },
+        "slash_commands": [
+            {
+                "command": "/list",
+                "description": "Checks online players",
+                "should_escape": false
+            },
+            {
+                "command": "/whois",
+                "description": "Checks info of mc players.",
+                "usage_hint": "[player]",
+                "should_escape": false
+            },
+            {
+                "command": "/link",
+                "description": "Link MC to Slack Account",
+                "usage_hint": "[code]",
+                "should_escape": false
+            },
+            {
+                "command": "/unlink",
+                "description": "Unlinks MC account",
+                "should_escape": false
+            },
+            {
+                "command": "/whisper",
+                "description": "Sends a private message to one or more players.",
+                "usage_hint": "[player(s) seperated by commas] [message]",
+                "should_escape": false
+            }
+        ]
     },
     "oauth_config": {
         "scopes": {
             "bot": [
                 "channels:history",
                 "channels:join",
-                "users:read",
                 "chat:write",
                 "chat:write.customize",
                 "chat:write.public",
-                "im:history"
+                "commands",
+                "im:history",
+                "incoming-webhook",
+                "users:read",
+                "emoji:read"
             ]
         }
     },
@@ -54,7 +87,7 @@ Clone this repo, and then create a slack bot using this manifest:
         "interactivity": {
             "is_enabled": true
         },
-        "org_deploy_enabled": false,
+        "org_deploy_enabled": true,
         "socket_mode_enabled": true,
         "token_rotation_enabled": false
     }
